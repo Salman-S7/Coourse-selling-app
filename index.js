@@ -1,7 +1,12 @@
 const express = require('express');
+const jwt = require('jsonwebtoken');
+
 const app = express();
 
-const port = 3000
+const SECRETA = "Sup3rS3cr3tAdmin";
+const SECRETU = "Sup3rS3cr3tUser";
+
+const PORT = 3000
 app.use(express.json())
 
 
@@ -15,15 +20,25 @@ const adminExists = (admin)=>{
 const isAdmin = (admin)=>{
     return admins.some(a=> a.username === admin.username && a.password === admin.password);
 }
+const getTokenForAdmin = (admin)=>{
+    const payload = {username : admin.username,};
+    return jwt.sign(payload, SECRETA, {expiresIn : '1h'});
+}
 const adminAuth = (req, res, next)=>{
-    const {username, password} = req.headers;
-        if(!username || !password){
-            return res.status(400).json({error:"username and password are required."});
-        }
-    if(isAdmin( {username, password})){
-        return next();
+    const authHeader = req.headers.authorization;
+    if(authHeader){
+        let token = authHeader.split(' ')[1];
+        jwt.verify(token, SECRETA, (err, admin)=>{
+            if(err){
+                return res.status(403).json({error: "Not authorised"})
+            }
+            req.admin = admin;
+            next();
+        })
+    }else{
+        res.status(401).json({error: "Not Authorised"})
     }
-    return res.status(401).json({error: "Not Authorised"})
+    
 }
 
 const userExists = (user)=>{
@@ -32,18 +47,31 @@ const userExists = (user)=>{
 const isUser =(user)=>{
     return users.some(usr=> usr.username === user.username && usr.password === user.password);
 }
+const getTokenForUser =(user)=>{
+    const payload = {username : user.username, };
+    return jwt.sign(payload, SECRETU, {expiresIn: '1h'});
+}
 const userAuth = (req, res, next)=>{
-    const {username, password} = req.headers;
-        if(!username || !password){
-            return res.status(400).json({error:"username and password are required."});
-        }
-    if(isUser( {username, password})){
-        return next();
+    const authHeader = req.headers.authorization;
+
+    if(authHeader){
+        let token = authHeader.split(' ')[1];
+        jwt.verify(token, SECRETU, (err, user)=>{
+            if(err){
+                return res.status(403).json({error: "Not authorised"})
+            }
+            req.user = user;
+            console.log(user);
+            console.log(req)
+            return next();
+        }) 
+    }else{
+        return res.status(401).json({error: "Not Authorised"})
     }
-    return res.status(401).json({error: "Not Authorised"})
 }
 const courseAlredyBought = (courseId, username)=>{
     let user = users.find(u=> u.username === username);
+    console.log(user)
     let course = user.courses.find(c=>Number(c.courseId) === Number(courseId));
     if(course){
         return true;
@@ -60,8 +88,9 @@ app.post('/admin/signup', (req, res) => {
         if(adminExists({username, password})){
             return res.status(409).json({error:"Admin already exists."});
         }
+        const token = getTokenForAdmin({username,password});
         admins.push({username,password});
-        res.status(201).json({messege: "Admin created succesfully."});
+        res.status(201).json({messege: "Admin created succesfully.", token : token,});
     } catch (error) {
         console.error("Error in admin signup", error)
         res.status(500).json({error: "Internal server error"});
@@ -75,7 +104,9 @@ app.post('/admin/login', (req, res) => {
             return res.status(400).json({error:"username and password are required."});
         }
         if(isAdmin({username, password})){
-            return res.status(201).json({messege: "Admin logged in succesfully."});
+            const token = getTokenForAdmin({username, password});
+            return res.status(201).json({messege: "Admin logged in succesfully.",
+        token : token});
         }
         
         res.status(401).json({error: "Incorrect credentials."});
@@ -159,8 +190,9 @@ app.post('/user/signup', (req, res) => {
         if(userExists({username, password})){
             return res.status(409).json({error:"User already exists."});
         }
+        const token = getTokenForUser({username, password});
         users.push({username,password, courses:[]});
-        res.status(201).json({messege: "User created succesfully."});
+        res.status(201).json({messege: "User created succesfully.", token: token});
     } catch (error) {
         console.error("Error in user signup", error)
         res.status(500).json({error: "Internal server error"});
@@ -174,9 +206,9 @@ app.post('/user/login', (req, res) => {
             return res.status(400).json({error:"username and password are required."});
         }
         if(isUser({username, password})){
-            return res.status(201).json({messege: "User logged in succesfully."});
+            const token = getTokenForUser({username, password});
+            return res.status(201).json({messege: "User logged in succesfully.", token: token});
         }
-        
         res.status(401).json({error: "Incorrect credentials."});
     } catch (error) {
         console.error("Error in user login", error)
@@ -193,8 +225,9 @@ app.get('/user/courses',userAuth,(req,res)=>{
 app.post('/user/courses/:courseid',userAuth, (req,res)=>{
     let courseId = Number(req.params.courseid);
     console.log(courseId)
-    let username = req.headers.username;
-    if(courseAlredyBought(courseId,req.headers.username)){
+    let username = req.user.username;
+    console.log("this is the username --------->",req.user.username);
+    if(courseAlredyBought(courseId,username)){
         return res.status(409).json({error: "Course alredy purchased by the user"})
     }
     const requestedCourse = courses.find(c=>{
@@ -212,12 +245,12 @@ app.post('/user/courses/:courseid',userAuth, (req,res)=>{
 
 //route to get the purchased courses
 app.get('/user/purchased', userAuth, (req,res)=>{
-    let user = users.find(usr=> usr.username === req.headers.username);
+    let user = users.find(usr=> usr.username === req.user.username);
     res.status(201).json({PurchaseCourses: user.courses});
 })
 app.all('*', (req, res) => {
    res.status(404).send("Not Found");
 })
-app.listen(port, () => {
-  console.log(`Example app listening on port ${port}`)
+app.listen(PORT, () => {
+  console.log(`Example app listening on PORT ${PORT}`)
 })
